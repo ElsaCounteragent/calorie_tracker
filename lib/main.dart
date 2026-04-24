@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:health/health.dart';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 
@@ -45,41 +44,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   @override
   void initState() {
     super.initState();
-    // Only cast the Apple Health spell if we are NOT on the web, AND we are on an iPhone! 🦇🍎
-    if (!kIsWeb && Platform.isIOS) {
-      syncMagicWeight();
-    }
-  }
-
-  Future<void> syncMagicWeight() async {
-    Health().configure();
-    var types = [HealthDataType.WEIGHT];
-    bool requested = await Health().requestAuthorization(types);
-
-    if (requested) {
-      DateTime now = DateTime.now();
-      DateTime yesterday = now.subtract(const Duration(days: 1));
-
-      List<HealthDataPoint> healthData = await Health().getHealthDataFromTypes(
-        types: types,
-        startTime: yesterday,
-        endTime: now,
-      );
-
-      if (healthData.isNotEmpty) {
-        healthData.sort((a, b) {
-          // If Apple forgets the date, just use right now as a backup!
-          DateTime dateA = a.dateFrom;
-          DateTime dateB = b.dateFrom;
-          return dateB.compareTo(dateA);
-        });
-        double latestWeight = double.parse(healthData.first.value.toString());
-
-        setState(() {
-          currentWeight = latestWeight;
-        });
-      }
-    }
+    // Health spell removed to bypass Apple's $99 troll toll! 🦇
   }
 
   int get caloriesLoggedToday {
