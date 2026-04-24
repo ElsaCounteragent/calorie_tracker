@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:health/health.dart';
 
 void main() {
   runApp(const ElsasJourneyApp());
@@ -39,6 +40,44 @@ class _DashboardScreenState extends State<DashboardScreen> {
   // The Timekeeper! 🕰️
   DateTime currentActiveDay = DateTime.now();
 
+  @override
+  void initState() {
+    super.initState();
+    // 🪄 The first spell the widget casts is to sync your weight!
+    syncMagicWeight();
+  }
+
+  Future<void> syncMagicWeight() async {
+    Health().configure();
+    var types = [HealthDataType.WEIGHT];
+    bool requested = await Health().requestAuthorization(types);
+
+    if (requested) {
+      DateTime now = DateTime.now();
+      DateTime yesterday = now.subtract(const Duration(days: 1));
+
+      List<HealthDataPoint> healthData = await Health().getHealthDataFromTypes(
+        types: types,
+        startTime: yesterday,
+        endTime: now,
+      );
+
+      if (healthData.isNotEmpty) {
+        healthData.sort((a, b) {
+          // If Apple forgets the date, just use right now as a backup!
+          DateTime dateA = a.dateFrom;
+          DateTime dateB = b.dateFrom;
+          return dateB.compareTo(dateA);
+        });
+        double latestWeight = double.parse(healthData.first.value.toString());
+
+        setState(() {
+          currentWeight = latestWeight;
+        });
+      }
+    }
+  }
+
   int get caloriesLoggedToday {
     int total = 0;
     for (var meal in todaysMeals) {
@@ -55,23 +94,24 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   // Rolling 7-day window! 📊
+  // REPLACE your old weeklyData list with this one! 📊✨
   final List<Map<String, dynamic>> weeklyData = [
-    {'day': 'Mon', 'intake': 1500},
-    {'day': 'Tue', 'intake': 1600},
-    {'day': 'Wed', 'intake': 1450},
-    {'day': 'Thu', 'intake': 1550},
-    {'day': 'Fri', 'intake': 1400},
-    {'day': 'Sat', 'intake': 1700},
-    {'day': 'Today', 'intake': 0},
+    {'day': 'Mon', 'intake': 0},
+    {'day': 'Tue', 'intake': 0},
+    {'day': 'Wed', 'intake': 0},
+    {'day': 'Thu', 'intake': 0},
+    {'day': 'Fri', 'intake': 0},
+    {'day': 'Sat', 'intake': 0},
+    {'day': 'Today', 'intake': 0}, // This is the dynamic bar!
   ];
 
   // The Midnight Magic Spell 🌙✨
   void _checkMidnightReset() {
     DateTime now = DateTime.now();
-    // If the day of the month has changed...
+    // If the date has changed to a new day...
     if (now.day != currentActiveDay.day) {
       setState(() {
-        // 1. Rename the old "Today" to its actual day name (e.g., "Sun")
+        // 1. Rename the old "Today" to what day it actually was (e.g., "Mon")
         String yesterdayName = [
           'Mon',
           'Tue',
@@ -84,13 +124,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
         weeklyData.last['day'] = yesterdayName;
         weeklyData.last['intake'] = caloriesLoggedToday;
 
-        // 2. Shift everything left (remove the oldest day)
+        // 2. Remove the oldest day at the far left to make room
         weeklyData.removeAt(0);
 
-        // 3. Add a brand new "Today" at the end!
+        // 3. Add a fresh, empty "Today" to the far right!
         weeklyData.add({'day': 'Today', 'intake': 0});
 
-        // 4. Wipe the spellbook clean for the new day
+        // 4. Wipe your spellbook clean for the new day
         todaysMeals.clear();
         currentActiveDay = now;
       });
