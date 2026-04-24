@@ -1,0 +1,31 @@
+name: Build Elsa's App 🦇
+on: [push]
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - name: Open the Vault
+        uses: actions/checkout@v4
+      
+      - name: Summon Flutter Magic
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          
+      - name: Gather Ingredients
+        run: flutter pub get
+        
+      - name: Build iOS App (Bypass Apple's Toll) 🪄
+        run: flutter build ios --release --no-codesign
+        
+      - name: Package into IPA File 📦
+        run: |
+          mkdir -p Payload
+          mv build/ios/iphoneos/Runner.app Payload/
+          zip -r calorie-tracker.ipa Payload
+          
+      - name: Save the Artifact for Elsa 💜
+        uses: actions/upload-artifact@v4
+        with:
+          name: calorie-tracker-App
+          path: calorie-tracker.ipa
