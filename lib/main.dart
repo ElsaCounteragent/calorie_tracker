@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:health/health.dart';
+import 'dart:io';
+import 'package:flutter/foundation.dart';
 
 void main() {
   runApp(const ElsasJourneyApp());
@@ -43,8 +45,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
   @override
   void initState() {
     super.initState();
-    // 🪄 The first spell the widget casts is to sync your weight!
-    syncMagicWeight();
+    // Only cast the Apple Health spell if we are NOT on the web, AND we are on an iPhone! 🦇🍎
+    if (!kIsWeb && Platform.isIOS) {
+      syncMagicWeight();
+    }
   }
 
   Future<void> syncMagicWeight() async {
