@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
-import 'dart:io';
-import 'package:flutter/foundation.dart';
+import 'dart:convert';
+import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
   runApp(const ElsasJourneyApp());
@@ -35,8 +35,8 @@ class DashboardScreen extends StatefulWidget {
 }
 
 class _DashboardScreenState extends State<DashboardScreen> {
-  double currentWeight = 76.0;
-  List<Map<String, dynamic>> todaysMeals = [];
+  double currentWeight = 75.5;
+  double targetWeight = 63.6;
 
   // The Timekeeper! 🕰️
   DateTime currentActiveDay = DateTime.now();
@@ -44,15 +44,43 @@ class _DashboardScreenState extends State<DashboardScreen> {
   @override
   void initState() {
     super.initState();
-    // Health spell removed to bypass Apple's $99 troll toll! 🦇
+    _loadMemory(); // 🪄 Wakes up your saved data!
   }
 
-  int get caloriesLoggedToday {
-    int total = 0;
-    for (var meal in todaysMeals) {
-      total += (meal['calories'] as int);
-    }
-    return total;
+  // 🔮 Reads the memory when the app opens
+  Future<void> _loadMemory() async {
+    final prefs = await SharedPreferences.getInstance();
+    setState(() {
+      currentWeight = prefs.getDouble('weight') ?? 76.0;
+      targetWeight = prefs.getDouble('targetWeight') ?? 63.6;
+      String? activeDayStr = prefs.getString('activeDay');
+      if (activeDayStr != null) currentActiveDay = DateTime.parse(activeDayStr);
+
+      String? weekJson = prefs.getString('weeklyData');
+      if (weekJson != null) {
+        List<dynamic> decoded = jsonDecode(weekJson);
+        weeklyData.clear();
+        for (var day in decoded) {
+          weeklyData.add({
+            'day': day['day'],
+            'intake': day['intake'],
+            // Safety check in case it's an old save without meals!
+            'meals': day['meals'] != null
+                ? List<Map<String, dynamic>>.from(day['meals'])
+                : [],
+          });
+        }
+      }
+    });
+  }
+
+  // 💾 Writes the memory to the phone
+  Future<void> _saveMemory() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setDouble('weight', currentWeight);
+    await prefs.setDouble('targetWeight', targetWeight);
+    await prefs.setString('activeDay', currentActiveDay.toIso8601String());
+    await prefs.setString('weeklyData', jsonEncode(weeklyData));
   }
 
   int calculateDailyGoal() {
@@ -62,25 +90,40 @@ class _DashboardScreenState extends State<DashboardScreen> {
     return dynamicGoal.toInt();
   }
 
+  int calculateDaysLeft() {
+    // If you already reached your goal, the countdown is 0! 🎉
+    if (currentWeight <= targetWeight) return 0;
+
+    // 1 kg of weight is roughly 7700 kcal.
+    // Your daily deficit is strictly set to 550 kcal in your formula.
+    double dailyDeficit = 550.0;
+    double kgLostPerDay = dailyDeficit / 7700.0;
+
+    double kgToLose = currentWeight - targetWeight;
+    double daysLeft = kgToLose / kgLostPerDay;
+
+    return daysLeft.ceil(); // Rounds up to the nearest whole day!
+  }
+
+  int selectedDayIndex =
+      6; // 6 means the graph is looking at "Today" by default!
   // Rolling 7-day window! 📊
   // REPLACE your old weeklyData list with this one! 📊✨
   final List<Map<String, dynamic>> weeklyData = [
-    {'day': 'Mon', 'intake': 0},
-    {'day': 'Tue', 'intake': 0},
-    {'day': 'Wed', 'intake': 0},
-    {'day': 'Thu', 'intake': 0},
-    {'day': 'Fri', 'intake': 0},
-    {'day': 'Sat', 'intake': 0},
-    {'day': 'Today', 'intake': 0}, // This is the dynamic bar!
+    {'day': 'Day 1', 'intake': 0, 'meals': []},
+    {'day': 'Day 2', 'intake': 0, 'meals': []},
+    {'day': 'Day 3', 'intake': 0, 'meals': []},
+    {'day': 'Day 4', 'intake': 0, 'meals': []},
+    {'day': 'Day 5', 'intake': 0, 'meals': []},
+    {'day': 'Yesterday', 'intake': 0, 'meals': []},
+    {'day': 'Today', 'intake': 0, 'meals': []},
   ];
 
   // The Midnight Magic Spell 🌙✨
   void _checkMidnightReset() {
     DateTime now = DateTime.now();
-    // If the date has changed to a new day...
     if (now.day != currentActiveDay.day) {
       setState(() {
-        // 1. Rename the old "Today" to what day it actually was (e.g., "Mon")
         String yesterdayName = [
           'Mon',
           'Tue',
@@ -91,18 +134,15 @@ class _DashboardScreenState extends State<DashboardScreen> {
           'Sun',
         ][currentActiveDay.weekday - 1];
         weeklyData.last['day'] = yesterdayName;
-        weeklyData.last['intake'] = caloriesLoggedToday;
 
-        // 2. Remove the oldest day at the far left to make room
         weeklyData.removeAt(0);
+        // Add a totally blank day with an empty spellbook!
+        weeklyData.add({'day': 'Today', 'intake': 0, 'meals': []});
 
-        // 3. Add a fresh, empty "Today" to the far right!
-        weeklyData.add({'day': 'Today', 'intake': 0});
-
-        // 4. Wipe your spellbook clean for the new day
-        todaysMeals.clear();
         currentActiveDay = now;
+        selectedDayIndex = 6; // Snap back to Today
       });
+      _saveMemory();
     }
   }
 
@@ -110,25 +150,40 @@ class _DashboardScreenState extends State<DashboardScreen> {
     TextEditingController weightController = TextEditingController(
       text: currentWeight.toString(),
     );
+    TextEditingController targetController = TextEditingController(
+      text: targetWeight.toString(),
+    );
+
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
         backgroundColor: const Color(0xFF2C2C2C),
         title: const Text(
-          'Update Weight 🦇',
+          'Update Magic 🦇',
           style: TextStyle(color: Color(0xFFE1BEE7)),
         ),
-        content: TextField(
-          controller: weightController,
-          keyboardType: TextInputType.number,
-          style: const TextStyle(color: Colors.white),
-          decoration: const InputDecoration(
-            labelText: 'New Weight (kg)',
-            labelStyle: TextStyle(color: Color(0xFF7B1FA2)),
-            enabledBorder: UnderlineInputBorder(
-              borderSide: BorderSide(color: Color(0xFF7B1FA2)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: weightController,
+              keyboardType: TextInputType.number,
+              style: const TextStyle(color: Colors.white),
+              decoration: const InputDecoration(
+                labelText: 'Current Weight (kg)',
+                labelStyle: TextStyle(color: Color(0xFF7B1FA2)),
+              ),
             ),
-          ),
+            TextField(
+              controller: targetController,
+              keyboardType: TextInputType.number,
+              style: const TextStyle(color: Colors.white),
+              decoration: const InputDecoration(
+                labelText: 'Dream Goal (kg)',
+                labelStyle: TextStyle(color: Color(0xFF7B1FA2)),
+              ),
+            ),
+          ],
         ),
         actions: [
           TextButton(
@@ -136,11 +191,99 @@ class _DashboardScreenState extends State<DashboardScreen> {
               setState(() {
                 currentWeight =
                     double.tryParse(weightController.text) ?? currentWeight;
+                targetWeight =
+                    double.tryParse(targetController.text) ?? targetWeight;
               });
+              _saveMemory();
               Navigator.pop(context);
             },
             child: const Text(
-              'Save Magic 🪄',
+              'Save 🪄',
+              style: TextStyle(color: Color(0xFFCE93D8)),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showEditDeleteDialog(int mealIndex) {
+    TextEditingController nameController = TextEditingController(
+      text: weeklyData[selectedDayIndex]['meals'][mealIndex]['name'],
+    );
+    TextEditingController calController = TextEditingController(
+      text: weeklyData[selectedDayIndex]['meals'][mealIndex]['calories']
+          .toString(),
+    );
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF2C2C2C),
+        title: const Text(
+          'Edit Magic 🦇',
+          style: TextStyle(color: Color(0xFFE1BEE7)),
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: nameController,
+              style: const TextStyle(color: Colors.white),
+              decoration: const InputDecoration(
+                labelText: 'Meal Name',
+                labelStyle: TextStyle(color: Color(0xFF7B1FA2)),
+              ),
+            ),
+            TextField(
+              controller: calController,
+              keyboardType: TextInputType.number,
+              style: const TextStyle(color: Colors.white),
+              decoration: const InputDecoration(
+                labelText: 'Calories',
+                labelStyle: TextStyle(color: Color(0xFF7B1FA2)),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              // DELETE BUTTON
+              setState(() {
+                weeklyData[selectedDayIndex]['intake'] -=
+                    weeklyData[selectedDayIndex]['meals'][mealIndex]['calories']
+                        as int;
+                weeklyData[selectedDayIndex]['meals'].removeAt(mealIndex);
+              });
+              _saveMemory();
+              Navigator.pop(context);
+            },
+            child: const Text(
+              'Delete 🗑️',
+              style: TextStyle(color: Colors.redAccent),
+            ),
+          ),
+          TextButton(
+            onPressed: () {
+              // SAVE BUTTON
+              setState(() {
+                int oldCal =
+                    weeklyData[selectedDayIndex]['meals'][mealIndex]['calories']
+                        as int;
+                int newCal = int.tryParse(calController.text) ?? oldCal;
+                weeklyData[selectedDayIndex]['meals'][mealIndex] = {
+                  'name': nameController.text,
+                  'calories': newCal,
+                };
+                weeklyData[selectedDayIndex]['intake'] +=
+                    (newCal - oldCal); // Update the bar height!
+              });
+              _saveMemory();
+              Navigator.pop(context);
+            },
+            child: const Text(
+              'Save 🪄',
               style: TextStyle(color: Color(0xFFCE93D8)),
             ),
           ),
@@ -150,18 +293,18 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   @override
+  @override
   Widget build(BuildContext context) {
-    // Check if Cinderella's carriage needs to reset every time the screen updates!
     _checkMidnightReset();
 
     int todaysGoal = calculateDailyGoal();
-    int remainingCalories = todaysGoal - caloriesLoggedToday;
+    // Always show the selected day's remaining allowance
+    int remainingCalories =
+        todaysGoal - (weeklyData[selectedDayIndex]['intake'] as int);
 
-    // Dynamically update today's intake on the graph
-    weeklyData.last['intake'] = caloriesLoggedToday;
-
-    double maxIntake = 2000.0;
-    double goalHeightFactor = todaysGoal / maxIntake;
+    double maxIntake = 2100.0;
+    double goalHeightFactor =
+        (todaysGoal > maxIntake ? maxIntake : todaysGoal) / maxIntake;
 
     return Scaffold(
       appBar: AppBar(
@@ -170,14 +313,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
           style: TextStyle(fontWeight: FontWeight.bold),
         ),
         centerTitle: true,
-        // The Reset button is GONE! 🦇
       ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(16.0),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            // Daily Magic Energy Card 🖤✨
+            // Energy Card
             Card(
               color: Colors.white,
               elevation: 4,
@@ -190,7 +332,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 child: Column(
                   children: [
                     const Text(
-                      'Daily Allowance 🦇',
+                      'Today\'s Allowance 🦇',
                       style: TextStyle(
                         fontSize: 18,
                         fontWeight: FontWeight.bold,
@@ -220,7 +362,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
             ),
             const SizedBox(height: 20),
 
-            // The Animated Kuromi Bar Graph 📊✨
+            // The INTERACTIVE Graph 📊
             Card(
               color: Colors.white,
               elevation: 4,
@@ -232,9 +374,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 child: Column(
                   children: [
                     const Text(
-                      'Weekly Energy 💜',
+                      'Tap a day to view/edit! 💜',
                       style: TextStyle(
-                        fontSize: 18,
+                        fontSize: 16,
                         fontWeight: FontWeight.bold,
                         color: Color(0xFF4A306D),
                       ),
@@ -245,67 +387,93 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       child: Stack(
                         alignment: Alignment.bottomCenter,
                         children: [
+                          // 🪄 The Subtle Phantom Limit Line!
                           Positioned(
-                            bottom: 100 * goalHeightFactor + 20,
+                            // +24 pushes the line up to account for the text sitting under the bars!
+                            bottom: (100 * goalHeightFactor) + 24,
                             left: 0,
                             right: 0,
-                            child: Row(
-                              children: List.generate(
-                                30,
-                                (index) => Expanded(
-                                  child: Container(
-                                    color: index % 2 == 0
-                                        ? const Color(
-                                            0xFF2C2C2C,
-                                          ).withOpacity(0.4)
-                                        : Colors.transparent,
-                                    height: 2,
-                                  ),
-                                ),
-                              ),
+                            child: Container(
+                              height: 2,
+                              color: const Color(0xFF4A306D).withOpacity(
+                                0.25,
+                              ), // A very soft, translucent dark purple
                             ),
                           ),
                           Row(
                             mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                             crossAxisAlignment: CrossAxisAlignment.end,
-                            children: weeklyData.map((data) {
+                            children: weeklyData.asMap().entries.map((entry) {
+                              int idx = entry.key;
+                              var data = entry.value;
                               double rawHeight = data['intake'] / maxIntake;
                               double heightFactor = rawHeight > 1.0
                                   ? 1.0
                                   : rawHeight;
-                              bool metGoal = data['intake'] <= todaysGoal;
+                              bool isSelected = idx == selectedDayIndex;
 
-                              return Column(
-                                mainAxisAlignment: MainAxisAlignment.end,
-                                children: [
-                                  AnimatedContainer(
-                                    duration: const Duration(milliseconds: 600),
-                                    curve: Curves.easeOutCubic,
-                                    width: 20,
-                                    height: 100 * heightFactor,
-                                    decoration: BoxDecoration(
-                                      color: metGoal
-                                          ? const Color(0xFF7B1FA2)
-                                          : Colors.grey[400],
-                                      borderRadius: const BorderRadius.vertical(
-                                        top: Radius.circular(5),
+                              // 💔 The Sad Color Logic
+                              bool wentOverLimit = data['intake'] > todaysGoal;
+                              Color barColor;
+
+                              if (wentOverLimit) {
+                                barColor = Colors
+                                    .grey[600]!; // A sad, lifeless, drained grey
+                              } else if (isSelected) {
+                                barColor = const Color(
+                                  0xFFE1BEE7,
+                                ); // Bright magical highlight
+                              } else {
+                                barColor = const Color(
+                                  0xFF7B1FA2,
+                                ); // Happy Kuromi purple!
+                              }
+
+                              return GestureDetector(
+                                onTap: () {
+                                  setState(() {
+                                    selectedDayIndex = idx;
+                                  });
+                                },
+                                child: Column(
+                                  mainAxisAlignment: MainAxisAlignment.end,
+                                  children: [
+                                    AnimatedContainer(
+                                      duration: const Duration(
+                                        milliseconds: 300,
+                                      ),
+                                      width: isSelected ? 24 : 20,
+                                      height: 100 * heightFactor,
+                                      decoration: BoxDecoration(
+                                        color:
+                                            barColor, // 🪄 Cast the new dynamic color!
+                                        borderRadius:
+                                            const BorderRadius.vertical(
+                                              top: Radius.circular(5),
+                                            ),
+                                        border: isSelected
+                                            ? Border.all(
+                                                color: const Color(0xFF4A306D),
+                                                width: 2,
+                                              )
+                                            : null,
                                       ),
                                     ),
-                                  ),
-                                  const SizedBox(height: 8),
-                                  Text(
-                                    data['day'],
-                                    style: TextStyle(
-                                      fontSize: 12,
-                                      color: data['day'] == 'Today'
-                                          ? const Color(0xFF7B1FA2)
-                                          : Colors.black54,
-                                      fontWeight: data['day'] == 'Today'
-                                          ? FontWeight.bold
-                                          : FontWeight.normal,
+                                    const SizedBox(height: 8),
+                                    Text(
+                                      data['day'],
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        color: isSelected
+                                            ? const Color(0xFF7B1FA2)
+                                            : Colors.black54,
+                                        fontWeight: isSelected
+                                            ? FontWeight.bold
+                                            : FontWeight.normal,
+                                      ),
                                     ),
-                                  ),
-                                ],
+                                  ],
+                                ),
                               );
                             }).toList(),
                           ),
@@ -318,7 +486,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
             ),
             const SizedBox(height: 20),
 
-            // Timeline & Dynamic Weight Goals 🦋
+            // Timeline & Weight
             Row(
               children: [
                 Expanded(
@@ -328,7 +496,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(15),
                     ),
-                    child: const Padding(
+                    child: Padding(
                       padding: EdgeInsets.all(16.0),
                       child: Column(
                         children: [
@@ -341,8 +509,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
                           ),
                           SizedBox(height: 8),
                           Text(
-                            '174',
-                            style: TextStyle(
+                            '${calculateDaysLeft()}', // <-- 🪄 Calls the math directly! No variables needed!
+                            style: const TextStyle(
                               fontSize: 28,
                               color: Colors.white,
                               fontWeight: FontWeight.bold,
@@ -404,17 +572,17 @@ class _DashboardScreenState extends State<DashboardScreen> {
             ),
             const SizedBox(height: 20),
 
-            // Daily Spellbook 📓🦇
-            const Text(
-              '  Today\'s Spellbook 📓',
-              style: TextStyle(
+            // Dynamic Spellbook List 📓🦇
+            Text(
+              '  ${weeklyData[selectedDayIndex]['day']}\'s Spellbook 📓 (Tap to Edit)',
+              style: const TextStyle(
                 fontSize: 18,
                 fontWeight: FontWeight.bold,
                 color: Color(0xFF4A306D),
               ),
             ),
             const SizedBox(height: 10),
-            todaysMeals.isEmpty
+            (weeklyData[selectedDayIndex]['meals'] as List).isEmpty
                 ? Card(
                     color: Colors.white,
                     shape: RoundedRectangleBorder(
@@ -424,7 +592,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       padding: EdgeInsets.all(20.0),
                       child: Center(
                         child: Text(
-                          'No magic consumed yet today! 🌸',
+                          'No magic consumed on this day! 🌸',
                           style: TextStyle(color: Colors.black54),
                         ),
                       ),
@@ -433,32 +601,36 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 : ListView.builder(
                     shrinkWrap: true,
                     physics: const NeverScrollableScrollPhysics(),
-                    itemCount: todaysMeals.length,
+                    itemCount:
+                        (weeklyData[selectedDayIndex]['meals'] as List).length,
                     itemBuilder: (context, index) {
-                      final meal = todaysMeals[index];
-                      return Card(
-                        color: const Color(0xFF2C2C2C),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                        child: ListTile(
-                          leading: const Icon(
-                            Icons.restaurant,
-                            color: Color(0xFFE1BEE7),
+                      final meal = weeklyData[selectedDayIndex]['meals'][index];
+                      return GestureDetector(
+                        onTap: () => _showEditDeleteDialog(index),
+                        child: Card(
+                          color: const Color(0xFF2C2C2C),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(10),
                           ),
-                          title: Text(
-                            meal['name'],
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontWeight: FontWeight.bold,
+                          child: ListTile(
+                            leading: const Icon(
+                              Icons.edit,
+                              color: Color(0xFFE1BEE7),
                             ),
-                          ),
-                          trailing: Text(
-                            '${meal['calories']} kcal',
-                            style: const TextStyle(
-                              color: Color(0xFFCE93D8),
-                              fontWeight: FontWeight.bold,
-                              fontSize: 16,
+                            title: Text(
+                              meal['name'],
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                            trailing: Text(
+                              '${meal['calories']} kcal',
+                              style: const TextStyle(
+                                color: Color(0xFFCE93D8),
+                                fontWeight: FontWeight.bold,
+                                fontSize: 16,
+                              ),
                             ),
                           ),
                         ),
@@ -480,17 +652,23 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
           if (result != null && result is Map<String, dynamic>) {
             setState(() {
-              todaysMeals.add(result);
+              weeklyData[selectedDayIndex]['meals'].add(result);
+              weeklyData[selectedDayIndex]['intake'] +=
+                  result['calories'] as int;
             });
-            // Also check for reset right after logging just in case!
+            _saveMemory();
             _checkMidnightReset();
           }
         },
         backgroundColor: const Color(0xFF4A306D),
         icon: const Icon(Icons.add, color: Colors.white),
-        label: const Text(
-          'Log Meal',
-          style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+        // The button label magically changes to whichever day you tapped!
+        label: Text(
+          'Log for ${weeklyData[selectedDayIndex]['day']}',
+          style: const TextStyle(
+            color: Colors.white,
+            fontWeight: FontWeight.bold,
+          ),
         ),
       ),
     );
