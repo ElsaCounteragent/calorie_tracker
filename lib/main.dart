@@ -87,6 +87,27 @@ class _DashboardScreenState extends State<DashboardScreen> {
             .map((e) => Map<String, dynamic>.from(e))
             .toList();
       }
+      // 🪄 THE TIME-TRAVEL MIGRATION SPELL
+      // If the vault is empty, steal the old data from the graph!
+      if (historicalData.isEmpty) {
+        for (int i = 0; i < 6; i++) {
+          // Loop through the past 6 days
+          if (weeklyData[i]['intake'] > 0) {
+            // Only save days you actually tracked!
+            historicalData.add({
+              // Fake the date so the math doesn't break
+              'date': DateTime.now()
+                  .subtract(Duration(days: 6 - i))
+                  .toIso8601String(),
+              'weight':
+                  currentWeight, // Assume your weight was roughly the same
+              'intake': weeklyData[i]['intake'],
+              'dailyGoal': weeklyData[i]['dailyGoal'] ?? 2000,
+            });
+          }
+        }
+        _saveMemory(); // Lock the stolen data into the vault forever!
+      }
     });
   }
 
