@@ -37,6 +37,10 @@ class DashboardScreen extends StatefulWidget {
 class _DashboardScreenState extends State<DashboardScreen> {
   double currentWeight = 75.5;
   double targetWeight = 63.6;
+  List<Map<String, dynamic>> historicalData = [];
+  String? lastRecalibrationDate;
+  double lockedAveragePercentage = 1.0;
+  int lockedKcalPerKg = 7700;
 
   // The Timekeeper! 🕰️
   DateTime currentActiveDay = DateTime.now();
@@ -51,6 +55,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
   Future<void> _loadMemory() async {
     final prefs = await SharedPreferences.getInstance();
     setState(() {
+      lastRecalibrationDate = prefs.getString('lastRecalibrationDate');
+      lockedAveragePercentage =
+          prefs.getDouble('lockedAveragePercentage') ?? 1.0;
+      lockedKcalPerKg = prefs.getInt('lockedKcalPerKg') ?? 7700;
       currentWeight = prefs.getDouble('weight') ?? 76.0;
       targetWeight = prefs.getDouble('targetWeight') ?? 63.6;
       String? activeDayStr = prefs.getString('activeDay');
@@ -71,6 +79,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
           });
         }
       }
+      // Inside _loadMemory(), add this right at the end of the setState block:
+      String? historyJson = prefs.getString('historicalData');
+      if (historyJson != null) {
+        List<dynamic> decodedHistory = jsonDecode(historyJson);
+        historicalData = decodedHistory
+            .map((e) => Map<String, dynamic>.from(e))
+            .toList();
+      }
     });
   }
 
@@ -81,6 +97,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
     await prefs.setDouble('targetWeight', targetWeight);
     await prefs.setString('activeDay', currentActiveDay.toIso8601String());
     await prefs.setString('weeklyData', jsonEncode(weeklyData));
+    await prefs.setString('historicalData', jsonEncode(historicalData));
+    await prefs.setString('lastRecalibrationDate', lastRecalibrationDate ?? '');
+    await prefs.setDouble('lockedAveragePercentage', lockedAveragePercentage);
+    await prefs.setInt('lockedKcalPerKg', lockedKcalPerKg);
   }
 
   int calculateDailyGoal() {
@@ -91,18 +111,34 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   int calculateDaysLeft() {
-    // If you already reached your goal, the countdown is 0! 🎉
     if (currentWeight <= targetWeight) return 0;
 
-    // 1 kg of weight is roughly 7700 kcal.
-    // Your daily deficit is strictly set to 550 kcal in your formula.
-    double dailyDeficit = 550.0;
-    double kgLostPerDay = dailyDeficit / 7700.0;
+    // 🦇 The Fallback
+    if (historicalData.length < 30 || lastRecalibrationDate == null) {
+      double defaultLossPerDay = 550.0 / 7700.0;
+      return ((currentWeight - targetWeight) / defaultLossPerDay).ceil();
+    }
 
-    double kgToLose = currentWeight - targetWeight;
-    double daysLeft = kgToLose / kgLostPerDay;
+    // 🌸 The Smart Percentage Engine!
+    int todaysAllowance = calculateDailyGoal();
+    int todaysTDEE = todaysAllowance + 550;
 
-    return daysLeft.ceil(); // Rounds up to the nearest whole day!
+    // Expected intake based on your 30-day locked habits!
+    double expectedIntake = todaysAllowance * lockedAveragePercentage;
+    double expectedDeficit = todaysTDEE - expectedIntake;
+
+    if (expectedDeficit <= 0) expectedDeficit = 100; // Safety floor
+
+    double totalKcalToBurn = (currentWeight - targetWeight) * lockedKcalPerKg;
+    return (totalKcalToBurn / expectedDeficit).ceil();
+  }
+
+  String getMetabolismStatus() {
+    if (historicalData.length < 30 || lastRecalibrationDate == null) {
+      return 'Gathering Body Magic... (${30 - historicalData.length} days left)';
+    }
+    int pct = (lockedAveragePercentage * 100).round();
+    return '1kg = $lockedKcalPerKg kcal | Strictness: $pct% 🦋';
   }
 
   int selectedDayIndex =
@@ -124,6 +160,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
     DateTime now = DateTime.now();
     if (now.day != currentActiveDay.day) {
       setState(() {
+        // 🗄️ Secretly stash Today's final stats into the archive!
+        historicalData.add({
+          'date': currentActiveDay.toIso8601String(),
+          'weight': currentWeight,
+          'intake': weeklyData.last['intake'],
+          'dailyGoal': weeklyData.last['dailyGoal'],
+        });
         String yesterdayName = [
           'Mon',
           'Tue',
@@ -137,10 +180,65 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
         weeklyData.removeAt(0);
         // Add a totally blank day with an empty spellbook!
-        weeklyData.add({'day': 'Today', 'intake': 0, 'meals': []});
+        weeklyData.add({
+          'day': 'Today',
+          'intake': 0,
+          'meals': [],
+          'dailyGoal': calculateDailyGoal(),
+        });
 
         currentActiveDay = now;
-        selectedDayIndex = 6; // Snap back to Today
+        selectedDayIndex = 6;
+      });
+      _saveMemory();
+    }
+  }
+
+  void _runMondayRecalibration() {
+    DateTime now = DateTime.now();
+    // 🛑 Abort if it's not Monday!
+    if (now.weekday != DateTime.monday) return;
+
+    // 🛑 Abort if we already recalibrated this week!
+    if (lastRecalibrationDate != null) {
+      DateTime last = DateTime.parse(lastRecalibrationDate!);
+      // Check if the last run was within the last 6 days
+      if (now.difference(last).inDays < 6) return;
+    }
+
+    // 🛑 Abort if we don't have 30 days of data yet!
+    if (historicalData.length < 30) return;
+
+    var last30 = historicalData.sublist(historicalData.length - 30);
+
+    // 1. Calculate actual weight lost (Rolling Average)
+    double startSum = 0;
+    for (int i = 0; i < 7; i++) startSum += last30[i]['weight'] as double;
+    double endSum = 0;
+    for (int i = 23; i < 30; i++) endSum += last30[i]['weight'] as double;
+    double weightLost = (startSum / 7) - (endSum / 7);
+
+    if (weightLost > 0.05) {
+      int totalIntake = 0;
+      int totalExpectedTDEE = 0;
+      double totalPercentageSum = 0;
+
+      for (var day in last30) {
+        int intake = day['intake'] as int;
+        int goal = day['dailyGoal'] as int;
+        totalIntake += intake;
+        totalExpectedTDEE +=
+            (goal + 550); // Your formula: TDEE = Allowance + 550
+        totalPercentageSum += (intake / goal); // Store daily strictness %
+      }
+
+      int totalDeficit = totalExpectedTDEE - totalIntake;
+
+      // 🪄 LOCK IN THE REAL BIOLOGICAL MAGIC!
+      setState(() {
+        lockedKcalPerKg = (totalDeficit / weightLost).round();
+        lockedAveragePercentage = totalPercentageSum / 30;
+        lastRecalibrationDate = now.toIso8601String();
       });
       _saveMemory();
     }
@@ -295,6 +393,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   @override
   @override
   Widget build(BuildContext context) {
+    _runMondayRecalibration();
     _checkMidnightReset();
 
     int todaysGoal = calculateDailyGoal();
@@ -387,17 +486,15 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       child: Stack(
                         alignment: Alignment.bottomCenter,
                         children: [
-                          // 🪄 The Subtle Phantom Limit Line!
                           Positioned(
-                            // +24 pushes the line up to account for the text sitting under the bars!
-                            bottom: (100 * goalHeightFactor) + 24,
+                            bottom:
+                                100 +
+                                24, // 🪄 The Phantom Line is permanently frozen at 100% height!
                             left: 0,
                             right: 0,
                             child: Container(
                               height: 2,
-                              color: const Color(0xFF4A306D).withOpacity(
-                                0.25,
-                              ), // A very soft, translucent dark purple
+                              color: const Color(0xFF4A306D).withOpacity(0.25),
                             ),
                           ),
                           Row(
@@ -406,35 +503,33 @@ class _DashboardScreenState extends State<DashboardScreen> {
                             children: weeklyData.asMap().entries.map((entry) {
                               int idx = entry.key;
                               var data = entry.value;
-                              double rawHeight = data['intake'] / maxIntake;
-                              double heightFactor = rawHeight > 1.0
-                                  ? 1.0
+
+                              // 🪄 Normalization Logic: Compare intake ONLY to that day's specific goal!
+                              int goalForThatDay = (idx == 6)
+                                  ? calculateDailyGoal()
+                                  : (data['dailyGoal'] ?? calculateDailyGoal());
+
+                              double rawHeight =
+                                  data['intake'] / goalForThatDay;
+                              // Cap the visual bar at 1.2 (120%) so it doesn't fly off the screen if you overeat
+                              double heightFactor = rawHeight > 1.2
+                                  ? 1.2
                                   : rawHeight;
+
                               bool isSelected = idx == selectedDayIndex;
+                              bool wentOverLimit =
+                                  data['intake'] >
+                                  goalForThatDay; // Sad grey logic stays perfect!
 
-                              // 💔 The Sad Color Logic
-                              bool wentOverLimit = data['intake'] > todaysGoal;
-                              Color barColor;
-
-                              if (wentOverLimit) {
-                                barColor = Colors
-                                    .grey[600]!; // A sad, lifeless, drained grey
-                              } else if (isSelected) {
-                                barColor = const Color(
-                                  0xFFE1BEE7,
-                                ); // Bright magical highlight
-                              } else {
-                                barColor = const Color(
-                                  0xFF7B1FA2,
-                                ); // Happy Kuromi purple!
-                              }
+                              Color barColor = wentOverLimit
+                                  ? Colors.grey[600]!
+                                  : (isSelected
+                                        ? const Color(0xFFE1BEE7)
+                                        : const Color(0xFF7B1FA2));
 
                               return GestureDetector(
-                                onTap: () {
-                                  setState(() {
-                                    selectedDayIndex = idx;
-                                  });
-                                },
+                                onTap: () =>
+                                    setState(() => selectedDayIndex = idx),
                                 child: Column(
                                   mainAxisAlignment: MainAxisAlignment.end,
                                   children: [
@@ -445,8 +540,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                       width: isSelected ? 24 : 20,
                                       height: 100 * heightFactor,
                                       decoration: BoxDecoration(
-                                        color:
-                                            barColor, // 🪄 Cast the new dynamic color!
+                                        color: barColor,
                                         borderRadius:
                                             const BorderRadius.vertical(
                                               top: Radius.circular(5),
@@ -497,28 +591,38 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       borderRadius: BorderRadius.circular(15),
                     ),
                     child: Padding(
-                      padding: EdgeInsets.all(16.0),
+                      padding: const EdgeInsets.all(16.0),
                       child: Column(
                         children: [
-                          Text(
+                          const Text(
                             'Timeline 🗓️',
                             style: TextStyle(
                               fontWeight: FontWeight.bold,
                               color: Colors.white70,
                             ),
                           ),
-                          SizedBox(height: 8),
+                          const SizedBox(height: 8),
                           Text(
-                            '${calculateDaysLeft()}', // <-- 🪄 Calls the math directly! No variables needed!
+                            '${calculateDaysLeft()}',
                             style: const TextStyle(
                               fontSize: 28,
                               color: Colors.white,
                               fontWeight: FontWeight.bold,
                             ),
                           ),
-                          Text(
+                          const Text(
                             'Days Left',
                             style: TextStyle(color: Colors.white70),
+                          ),
+                          const SizedBox(height: 4),
+                          // 🪄 The Reveal!
+                          Text(
+                            getMetabolismStatus(),
+                            style: const TextStyle(
+                              fontSize: 10,
+                              color: Color(0xFFE1BEE7),
+                              fontStyle: FontStyle.italic,
+                            ),
                           ),
                         ],
                       ),
