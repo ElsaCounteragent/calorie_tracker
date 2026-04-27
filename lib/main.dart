@@ -221,7 +221,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     if (now.weekday != DateTime.monday) return;
 
     // 🛑 Abort if we already recalibrated this week!
-    if (lastRecalibrationDate != null) {
+    if (lastRecalibrationDate != null && lastRecalibrationDate!.isNotEmpty) {
       DateTime last = DateTime.parse(lastRecalibrationDate!);
       // Check if the last run was within the last 6 days
       if (now.difference(last).inDays < 6) return;
@@ -414,8 +414,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
   @override
   @override
   Widget build(BuildContext context) {
-    _runMondayRecalibration();
-    _checkMidnightReset();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _checkMidnightReset();
+      _runMondayRecalibration();
+    });
 
     int todaysGoal = calculateDailyGoal();
     // Always show the selected day's remaining allowance
