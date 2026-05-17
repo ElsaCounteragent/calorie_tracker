@@ -181,13 +181,21 @@ class _DashboardScreenState extends State<DashboardScreen> {
     DateTime now = DateTime.now();
     if (now.day != currentActiveDay.day) {
       setState(() {
-        // 🗄️ Secretly stash Today's final stats into the archive!
+        // 🗄️ The oldest day (index 0) is about to vanish from the visible week!
+        // Let's lock its final, fully-edited form into the permanent archive! 🔒✨
+        DateTime oldestDate = currentActiveDay.subtract(
+          const Duration(days: 6),
+        );
+
         historicalData.add({
-          'date': currentActiveDay.toIso8601String(),
+          'date': oldestDate.toIso8601String(),
           'weight': currentWeight,
-          'intake': weeklyData.last['intake'],
-          'dailyGoal': weeklyData.last['dailyGoal'],
+          'intake':
+              weeklyData[0]['intake'], // Capture the oldest day's final intake!
+          'dailyGoal': weeklyData[0]['dailyGoal'] ?? calculateDailyGoal(),
         });
+
+        // Change the old 'Today' into a weekday name
         String yesterdayName = [
           'Mon',
           'Tue',
@@ -199,8 +207,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
         ][currentActiveDay.weekday - 1];
         weeklyData.last['day'] = yesterdayName;
 
+        // Poof! Remove the oldest day we just safely archived! 💨
         weeklyData.removeAt(0);
-        // Add a totally blank day with an empty spellbook!
+
+        // Add a totally blank day with an empty spellbook for the new Today!
         weeklyData.add({
           'day': 'Today',
           'intake': 0,
@@ -423,10 +433,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
     // Always show the selected day's remaining allowance
     int remainingCalories =
         todaysGoal - (weeklyData[selectedDayIndex]['intake'] as int);
-
-    double maxIntake = 2100.0;
-    double goalHeightFactor =
-        (todaysGoal > maxIntake ? maxIntake : todaysGoal) / maxIntake;
 
     return Scaffold(
       appBar: AppBar(
